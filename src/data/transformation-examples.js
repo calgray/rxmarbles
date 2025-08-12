@@ -65,6 +65,20 @@ export const transformationExamples = {
     }
   },
 
+  bufferTimeOrCount: {
+    label: 'bufferTimeOrCount(30, 3)',
+    inputs: [
+      [{t:2, c:'A1'}, {t:4, c:'A2'}, {t:7, c:'A3'}, {t:31, c:'B1'}, {t:32, c:'B2'}, {t:40, c:'B3'}, {t:71, c:'C1'}, {t:72, c:'C2'}, {t:73, c:'C3'}],
+    ],
+    apply(inputs, scheduler) {
+      return inputs[0].pipe(
+        pluck('content'),
+        bufferTime(30, null, 3, scheduler),
+        map(x => `[${x}]`)
+      );
+    }
+  },
+
   bufferToggle: {
     label: 'bufferToggle(start$, x => timer(x))',
     inputs: [

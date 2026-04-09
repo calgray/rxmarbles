@@ -1,4 +1,4 @@
-import { timer } from 'rxjs';
+import { timer, race, merge as rxMerge } from 'rxjs';
 import {
   buffer,
   bufferCount,
@@ -7,6 +7,10 @@ import {
   bufferWhen,
   concatMap,
   concatMapTo,
+  groupBy,
+  take,
+  ignoreElements,
+  endWith,
   map,
   mapTo,
   mergeMap,
@@ -16,7 +20,7 @@ import {
   repeat,
   scan,
   switchMap,
-  switchMapTo
+  switchMapTo,
 } from 'rxjs/operators';
 import { evolve, merge } from 'ramda';
 
@@ -65,6 +69,20 @@ export const transformationExamples = {
     }
   },
 
+  bufferTimeOrCount: {
+    label: 'bufferTimeOrCount(30, 3)',
+    inputs: [
+      [{t:2, c:'A1'}, {t:4, c:'A2'}, {t:7, c:'A3'}, {t:31, c:'B1'}, {t:32, c:'B2'}, {t:40, c:'B3'}, {t:71, c:'C1'}, {t:72, c:'C2'}, {t:73, c:'C3'}],
+    ],
+    apply(inputs, scheduler) {
+      return inputs[0].pipe(
+        pluck('content'),
+        bufferTime(30, null, 3, scheduler),
+        map(x => `[${x}]`)
+      );
+    },
+  },
+
   bufferToggle: {
     label: 'bufferToggle(start$, x => timer(x))',
     inputs: [
@@ -95,6 +113,78 @@ export const transformationExamples = {
     }
   },
 
+  bufferGroupByCount: {
+    label: 'bufferGroupByCount(x=>x[0], 20, 3)',
+    inputs: [
+      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
+       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
+       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
+       //[{t:20, c:'0'}, {t:40, c:'0'}, {t:60, c:'0'}]
+    ],
+    apply(inputs, scheduler) {
+      const TIMEOUT = 20;
+      const MAX_COUNT = 3;
+
+      return inputs[0].pipe(
+        pluck('content'),
+        groupBy(x => x[0]),
+        mergeMap(group$ =>
+          group$.pipe(
+            bufferToggle(
+              group$.pipe(take(1)),
+              () => group$.pipe(
+                take(MAX_COUNT - 1),
+                ignoreElements(),
+                endWith(null)
+              )
+            ),
+          )
+        ),
+        map(x => `[${x}]`),
+        // buffer(inputs[1]),
+        // map(x => `[${x}]`)
+      );
+    }
+  },
+
+  bufferGroupByTimeOrCount: {
+    label: 'bufferGroupByTimeOrCount(x=>x[0], 20, 3)',
+    inputs: [
+      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
+       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
+       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
+       //[{t:20, c:'0'}, {t:40, c:'0'}, {t:60, c:'0'}]
+    ],
+    apply(inputs, scheduler) {
+      const TIMEOUT = 20;
+      const MAX_COUNT = 3;
+
+      return inputs[0].pipe(
+        pluck('content'),
+        groupBy(x => x[0]),
+        mergeMap(group$ =>
+          group$.pipe(
+            bufferToggle(
+              // open buffer on first item
+              group$.pipe(take(1)),
+              () => race(
+                group$.pipe(
+                  take(MAX_COUNT - 1),
+                  ignoreElements(),
+                  endWith(null)
+                ),
+                timer(TIMEOUT, scheduler)
+              )
+            ),
+          )
+        ),
+        map(x => `[${x}]`),
+        // buffer(inputs[1]),
+        // map(x => `[${x}]`)
+      );
+    }
+  },
+
   concatMap: {
     label: 'obs1$.concatMap(x => obs2$.pipe(map(y => "" + x + y))',
     inputs: [
@@ -120,6 +210,20 @@ export const transformationExamples = {
         pluck('content'),
         concatMapTo(inputs[1].pipe(pluck('content')))
       )
+    }
+  },
+
+  groupBy: {
+    label: 'groupBy',
+    inputs: [
+      [{t:0, c:'1'}, {t:10, c:'1'}, {t:20, c:'3'}, {t:30, c:'1'}, {t:50, c:'2'}, {t:60, c:'3'}],
+    ],
+    apply(inputs, scheduler) {
+      return inputs[0].pipe(
+        pluck('content'),
+        groupBy(x => x),
+        map(x => `${x.key}:[${x.refCountSubscription.groups.size}]`),
+      );
     }
   },
 

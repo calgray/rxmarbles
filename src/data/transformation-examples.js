@@ -1,4 +1,4 @@
-import { timer, race, merge as rxMerge } from 'rxjs';
+import { timer, race, defer, merge as rxMerge } from 'rxjs';
 import {
   buffer,
   bufferCount,
@@ -14,13 +14,20 @@ import {
   map,
   mapTo,
   mergeMap,
+  last,
+  mergeAll,
   mergeMapTo,
   pairwise,
   pluck,
+  publish,
+  skip,
   repeat,
   scan,
+  tap,
   switchMap,
   switchMapTo,
+  share,
+  shareReplay,
 } from 'rxjs/operators';
 import { evolve, merge } from 'ramda';
 
@@ -113,78 +120,6 @@ export const transformationExamples = {
     }
   },
 
-  bufferGroupByCount: {
-    label: 'bufferGroupByCount(x=>x[0], 20, 3)',
-    inputs: [
-      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
-       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
-       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
-       //[{t:20, c:'0'}, {t:40, c:'0'}, {t:60, c:'0'}]
-    ],
-    apply(inputs, scheduler) {
-      const TIMEOUT = 20;
-      const MAX_COUNT = 3;
-
-      return inputs[0].pipe(
-        pluck('content'),
-        groupBy(x => x[0]),
-        mergeMap(group$ =>
-          group$.pipe(
-            bufferToggle(
-              group$.pipe(take(1)),
-              () => group$.pipe(
-                take(MAX_COUNT - 1),
-                ignoreElements(),
-                endWith(null)
-              )
-            ),
-          )
-        ),
-        map(x => `[${x}]`),
-        // buffer(inputs[1]),
-        // map(x => `[${x}]`)
-      );
-    }
-  },
-
-  bufferGroupByTimeOrCount: {
-    label: 'bufferGroupByTimeOrCount(x=>x[0], 20, 3)',
-    inputs: [
-      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
-       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
-       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
-       //[{t:20, c:'0'}, {t:40, c:'0'}, {t:60, c:'0'}]
-    ],
-    apply(inputs, scheduler) {
-      const TIMEOUT = 20;
-      const MAX_COUNT = 3;
-
-      return inputs[0].pipe(
-        pluck('content'),
-        groupBy(x => x[0]),
-        mergeMap(group$ =>
-          group$.pipe(
-            bufferToggle(
-              // open buffer on first item
-              group$.pipe(take(1)),
-              () => race(
-                group$.pipe(
-                  take(MAX_COUNT - 1),
-                  ignoreElements(),
-                  endWith(null)
-                ),
-                timer(TIMEOUT, scheduler)
-              )
-            ),
-          )
-        ),
-        map(x => `[${x}]`),
-        // buffer(inputs[1]),
-        // map(x => `[${x}]`)
-      );
-    }
-  },
-
   concatMap: {
     label: 'obs1$.concatMap(x => obs2$.pipe(map(y => "" + x + y))',
     inputs: [
@@ -223,6 +158,182 @@ export const transformationExamples = {
         pluck('content'),
         groupBy(x => x),
         map(x => `${x.key}:[${x.refCountSubscription.groups.size}]`),
+      );
+    }
+  },
+
+
+  "groupBy.bufferCount": {
+    label: 'groupBy(x=>x[0]).mergeMap(g$=>g$.bufferCount(3).take(1), 2)',
+    inputs: [
+      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
+       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
+       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
+    ],
+    apply(inputs) {
+      const TIMEOUT = 20;
+      const MAX_COUNT = 3;
+      const MAX_CONCURRENT = 2;
+
+      return inputs[0].pipe(
+        pluck('content'),
+        groupBy(x => x[0]),
+        mergeMap(group$ =>
+            group$.pipe(
+              bufferCount(MAX_COUNT),
+              take(1),
+            ),
+          MAX_CONCURRENT
+        ),
+        map(x => `[${x}]`),
+      );
+    }
+  },
+
+  "groupBy.bufferTime": {
+    label: 'groupBy(x=>x[0]).mergeMap(g$=>g$.bufferTime(30).take(1), 2)',
+    inputs: [
+      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
+       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
+       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
+    ],
+    apply(inputs, scheduler) {
+      const MAX_CONCURRENT = 2;
+      const TIMEOUT = 20;
+
+      return inputs[0].pipe(
+        pluck('content'),
+        groupBy(x => x[0]),
+        mergeMap(group$ =>
+          group$.pipe(
+            bufferTime(TIMEOUT, undefined, undefined, scheduler=scheduler),
+            // bufferToggle(  // impl with toggle
+            //   group$,
+            //   () => timer(TIMEOUT, scheduler)
+            // ),
+            take(1),
+          ),
+          MAX_CONCURRENT,
+        ),
+        map(x => `[${x}]`),
+      );
+    }
+  },
+
+  "groupBy.bufferTimeOrCount": {
+    label: 'groupBy(x=>x[0]).mergeMap(g$=>g$.bufferTimeOrCount(30, 3).take(1), 2)',
+    inputs: [
+      [{t:0, c:'A1'}, {t:36, c:'B1'}, {t:50, c:'C1'},
+       {t:4, c:'A2'}, {t:40, c:'B2'}, {t:58, c:'C2'},
+       {t:8, c:'A3'}, {t:54, c:'B3'}, {t:68, c:'C3'}],
+    ],
+    apply(inputs, scheduler) {
+      const MAX_CONCURRENT = 2;
+      const CREATION_INTERVAL = undefined;
+      const TIMEOUT = 20;
+      const MAX_COUNT = 3;
+
+      return inputs[0].pipe(
+        pluck('content'),
+        groupBy(x => x[0]),
+        mergeMap(group$ =>
+          group$.pipe(
+            bufferTime(TIMEOUT, CREATION_INTERVAL, MAX_COUNT, scheduler=scheduler),
+            // bufferToggle(  // impl with toggle
+            //   group$,
+            //   () => race(
+            //     timer(TIMEOUT, scheduler),
+            //     group$.pipe(
+            //       take(MAX_COUNT - 1),
+            //       ignoreElements(),
+            //       endWith(null)
+            //     ),
+            //   ),
+            // ),
+            take(1),
+          ),
+          MAX_CONCURRENT,
+        ),
+        map(x => `[${x}]`),
+      );
+    }
+  },
+
+  "groupBy.bufferTimeOrCount.buffer": {
+    label: 'merge(obs1$,obs2$,obs3$).groupBy(x=>x[0]/3).mergeMap(g$ => g$.bufferTimeOrCount(30, 3).take(1), 5).buffer(obs4$)',
+    inputs: [
+      [{t:0, c:'0:1'}, {t:10, c:'1:1'}, {t:22, c:'2:1'}, {t:46, c:'3:1'}, {t:52, c:'4:1'}],
+      [{t:2, c:'0:2'}, {t:14, c:'1:2'}, {t:25, c:'2:2'}, {t:50, c:'3:2'}, {t:58, c:'4:2'}],
+      [{t:3, c:'0:3'}, {t:18, c:'1:3'}, {t:28, c:'2:3'}, {t:54, c:'3:3'}, {t:57, c:'4:3'}],
+    ],
+    apply(inputs, scheduler) {
+      const MAX_CONCURRENT = 5;
+      const TIMEOUT = 30;
+      const MAX_COUNT = 9;
+      const CREATION_INTERVAL = undefined;
+
+      return rxMerge(...inputs.slice(0, 3)).pipe(
+        pluck('content'),
+        groupBy(x => Math.floor(parseInt(x.slice(0,1)) / 3)),
+        mergeMap(group$ =>
+          group$.pipe(
+            bufferTime(TIMEOUT, CREATION_INTERVAL, MAX_COUNT, scheduler=scheduler),
+            take(1),
+          ),
+          MAX_CONCURRENT,
+        ),
+        map(x => `[${x}]`),
+      );
+    }
+  },
+
+  "groupBy.bufferCountOrClose.bufferWhen": {
+    label: 'merge(obs1$,obs2$,obs3$).groupBy(x=>floor(x[0]/3)).mergeMap(g$ => g$.bufferCountOrClose(9, obs4$), 5).bufferWhen(obs5$)',
+    inputs: [
+      [{t:0, c:'0:1'}, {t:10, c:'1:1'}, {t:22, c:'2:1'}, {t:46, c:'3:1'}, {t:52, c:'6:1'}],
+      [{t:2, c:'0:2'}, {t:14, c:'1:2'}, {t:25, c:'2:2'}, {t:50, c:'3:2'}, {t:58, c:'6:2'}],
+      [{t:3, c:'0:3'}, {t:18, c:'1:3'}, {t:28, c:'2:3'}, {t:54, c:'3:3'}, {t:61, c:'6:3'}],
+      [{t:30, c:'0'}, {t:80, c:'0'}],
+      [{t:20, c:'0'}],
+    ],
+    apply(inputs) {
+
+      const MAX_CONCURRENT = 2;
+      const MAX_COUNT = 9;
+
+      let flushOffset = 0;
+      const sharedBufferFlush$ = inputs[3].pipe(
+        tap(() => flushOffset++),  // aggressive skip ahead
+        shareReplay(MAX_CONCURRENT)
+      );
+
+      const makeFlush = () => sharedBufferFlush$.pipe(
+        skip(flushOffset),
+        take(1)
+      );
+
+      return rxMerge(...inputs.slice(0, 3)).pipe(
+        pluck('content'),
+        groupBy(x => Math.floor(parseInt(x.slice(0, 1)) / 3)),
+        mergeMap(group$ =>
+          group$.pipe(
+            bufferToggle(
+              group$.pipe(take(1)),
+              () => race(
+                defer(makeFlush),
+                group$.pipe(
+                  take(MAX_COUNT - 1),
+                  ignoreElements(),
+                ),
+              ),
+            ),
+            take(1),
+          ),
+          MAX_CONCURRENT,
+        ),
+        map(x => `[${x}]`),
+        bufferWhen(() => inputs[4].pipe(take(1))),
+        map(x => `[${x}]`),
       );
     }
   },
